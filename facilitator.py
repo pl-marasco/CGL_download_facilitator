@@ -1,5 +1,4 @@
 import concurrent
-import itertools
 import os.path
 
 import numpy as np
@@ -7,15 +6,18 @@ import pandas as pd
 import requests
 import re
 from tqdm.auto import tqdm
-from multiprocessing import Pool
 from concurrent.futures import ThreadPoolExecutor
 
 
-class CGLSession(object):
+class Session(object):
 
     def __init__(self, usr, psw):
 
         self.session = requests.Session()
+        if usr == '' or psw == '':
+            print('User and password are required. Registration available here: https://land.copernicus.vgt.vito.be/PDF/portal/Application.html#Home')
+            return
+
         self.session.auth = (usr, psw)
         self.url = 'https://land.copernicus.vgt.vito.be/manifest/'
 
@@ -36,7 +38,7 @@ class CGLSession(object):
             manifest_response.raise_for_status()
         except requests.exceptions.HTTPError as err:
             print(err)
-            return
+            return None
 
         self.products = pd.read_html(manifest_response.text, skiprows=2)[0]['Parent Directory'].dropna()
         self.products = self.products.apply(lambda x: x.replace('/', ''))
@@ -213,14 +215,16 @@ RT list          : {self.rt}''')
             download_list = self.observation_table.iloc[i_start:i_end][['url', 'file_name', 'int_path']].values.tolist()
 
         # path
-        if path is not None:
-            if not os.path.isabs(path):
-                self.path = os.path.abspath(path)
-            if not os.path.isdir(path):
-                os.makedirs(self.path, mode=0o777, exist_ok=True)
+        self.path = path
+        if self.path is not None:
+            if not os.path.isabs(self.path):
+                self.path = os.path.abspath(self.path)
         else:
             self.path = os.path.join(os.path.curdir, 'data', download_list[0][2])  # int_path
+
+        if not os.path.isdir(self.path):
             os.makedirs(self.path, mode=0o777, exist_ok=True)
+
 
         dl_tasks = {}
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -232,7 +236,7 @@ RT list          : {self.rt}''')
             for task in concurrent.futures.as_completed(list(dl_tasks)):
                 try:
                     file_name_d = task.result()
-                    print(f'{file_name_d} downloaded correctly/n/r')
+                    print(f'{file_name_d} downloaded correctly', end='\n')
                 except Exception as exc:
                     print('%r generated an exception: %s' % (url, exc))
 
@@ -263,19 +267,3 @@ RT list          : {self.rt}''')
         return file_name
 
 
-def main():
-
-    user = ''
-    psw = ''
-    folder = ''
-
-    CGL_test = CGLSession(user, psw)
-
-    products = CGL_test.list_collections()
-    product = CGL_test.load_collection('ndvi_v3_1km')
-
-    product.download(date=slice(pd.to_datetime('2020-06-01'), pd.to_datetime('2020-06-21')), path=r'.\data\obs')
-
-
-if __name__ == '__main__':
-    main()
