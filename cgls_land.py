@@ -134,7 +134,7 @@ class Collection:
         self.end_date = None
         self.set_date_range()
         self.sensors = self.set_sensors()
-        self.alg_version_list = self.set_alg_version_list()
+        self.alg_version = self.set_alg_version_list()
         if 'rt' in self.observation_table.columns:
             self.rt = self.observation_table['rt'].unique()
         else:
@@ -146,16 +146,13 @@ class Collection:
         self.end_date = self.observation_table['date'].tail(1).item()
 
     def set_alg_version_list(self):
-        self.alg_version_list = self.observation_table['version'].unique()
-        return self.alg_version_list
+        return self.observation_table['version'].unique()
 
     def set_rt(self):
-        self.rt = self.observation_table['rt'].unique()
-        return self.rt
+        return self.observation_table['rt'].unique()
 
     def set_sensors(self):
-        self.sensors = self.observation_table['sensor'].unique()
-        return self.sensors
+        return self.observation_table['sensor'].unique()
 
     @property
     def infos(self):
@@ -163,7 +160,7 @@ class Collection:
 Product name:      {self.name} 
 Sensor           : {self.sensors}
 Valid time period: [{self.start_date.date()}:{self.end_date.date()}]
-Algoritms        : {self.alg_version_list}
+Algoritms        : {self.alg_version}
 RT list          : {self.rt}''')
 
     def _select_date(self, date):
@@ -235,9 +232,16 @@ RT list          : {self.rt}''')
         q = ''
         if sensor is not None or alg is not None:
             if sensor is not None:
+                if sensor not in self.sensors:
+                    raise Exception('sensor not in list')
                 q += fr'sensor == "{sensor}"'
             if alg is not None:
-                q += f'version == \'{alg}\''
+                if alg not in self.alg_version:
+                    raise Exception('sensor not in list')
+                if q == '':
+                    q += f'version == "{alg}"'
+                else:
+                    q += f'& version == "{alg}"'
             self.observation_table = self.observation_table.query(q)
 
         # calc date span
