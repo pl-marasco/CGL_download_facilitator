@@ -274,6 +274,11 @@ RT list          : {self.rt}''')
         total_size = int(r.headers.get('content-length', 0))
         block_size = 1024  # 1 Kibibyte
         downloaded_bytes = 0
+
+        if os.path.isfile(d_path) and os.path.getsize(d_path) == total_size:
+            print(f'Skipping {file_name} as already available')
+            return d_path
+
         with tqdm(total=total_size, unit='iB', unit_scale=True, leave=False, desc=file_name) as progress:
             with open(d_path, 'wb') as f:
                 for chunk in r.iter_content(block_size):
