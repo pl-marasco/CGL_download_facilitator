@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import requests
 import re
+
 from tqdm.auto import tqdm
 from concurrent.futures import ThreadPoolExecutor
 
@@ -15,8 +16,8 @@ class Session(object):
 
         self.session = requests.Session()
         if usr == '' or psw == '':
-            print('User and password are required. Registration available here: https://land.copernicus.vgt.vito.be/PDF/portal/Application.html#Home')
-            return
+            raise Exception('User and password are mandatory for downloading. Registration available at: '
+                            'https://land.copernicus.vgt.vito.be/PDF/portal/Application.html#Home (top right)')
 
         self.session.auth = (usr, psw)
         self.url = 'https://land.copernicus.vgt.vito.be/manifest/'
@@ -30,6 +31,12 @@ class Session(object):
             return
 
         self.products = None
+
+    @property
+    def collections(self):
+        if self.products is None:
+            _ = self.list_collections()
+        print(*self.products.tolist(), sep='\n')
 
     def list_collections(self) -> list:
 
@@ -64,7 +71,8 @@ class Session(object):
             print(err)
             return
 
-        int_product_list = pd.read_html(col_manifest_response.text, skiprows=2)[0]['Parent Directory'].dropna().values[-1]
+        int_product_list = pd.read_html(col_manifest_response.text, skiprows=2)[0]['Parent Directory'].dropna(
+         ).values[-1]
         purl = f'{url}{int_product_list}'
 
         try:
@@ -90,7 +98,8 @@ class Session(object):
                 observation_table = pd.concat(
                     [observation_table, pd.DataFrame([[name, int_path, exploded[-1], line, sensor, version, RT,
                                                        pd.to_datetime(r[0], format="%Y/%m/%d")]],
-                                                     columns=['name', 'int_path', 'file_name', 'url', 'sensor', 'version', 'rt', 'date'],
+                                                     columns=['name', 'int_path', 'file_name', 'url', 'sensor',
+                                                              'version', 'rt', 'date'],
                                                      index=[n_index]
                                                      )
                      ])
@@ -99,7 +108,8 @@ class Session(object):
                 observation_table = pd.concat(
                     [observation_table, pd.DataFrame([[name, int_path, exploded[-1], line, sensor, version,
                                                        pd.to_datetime(r[0], format="%Y/%m/%d")]],
-                                                     columns=['name', 'int_path', 'file_name', 'url', 'sensor', 'version', 'date'],
+                                                     columns=['name', 'int_path', 'file_name', 'url', 'sensor',
+                                                              'version', 'date'],
                                                      index=[n_index]
                                                      )
                      ])
@@ -206,13 +216,16 @@ RT list          : {self.rt}''')
                 download_list.append(self.observation_table.iloc[i][['url', 'file_name', 'int_path']].values.tolist())
         elif isinstance(date, slice):
 
-            assert (self.start_date <= date.start <= self.end_date) or (self.start_date <= date.stop <= self.end_date), 'Date are out of the valid range'
+            assert (self.start_date <= date.start <= self.end_date) or \
+                   (self.start_date <= date.stop <= self.end_date), 'Date are out of the valid range'
             assert date.start <= date.stop, 'End date is before the start date'
+            assert date.start != date.stop, 'Dates coincide, please use only one date'
 
             i_start = self.observation_table.index.get_indexer([date.start], method='ffill')[0]
             i_end   = self.observation_table.index.get_indexer([date.stop],  method='ffill')[0]
 
-            download_list = self.observation_table.iloc[i_start:i_end][['url', 'file_name', 'int_path']].values.tolist()
+            download_list = self.observation_table.iloc[i_start:i_end+1][['url', 'file_name',
+                                                                         'int_path']].values.tolist()
 
         # path
         self.path = path
@@ -225,6 +238,7 @@ RT list          : {self.rt}''')
         if not os.path.isdir(self.path):
             os.makedirs(self.path, mode=0o777, exist_ok=True)
 
+        downloaded_list = []
 
         dl_tasks = {}
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -236,13 +250,19 @@ RT list          : {self.rt}''')
             for task in concurrent.futures.as_completed(list(dl_tasks)):
                 try:
                     file_name_d = task.result()
-                    print(f'{file_name_d} downloaded correctly', end='\n')
+                    downloaded_list.append(file_name_d)
                 except Exception as exc:
                     print('%r generated an exception: %s' % (url, exc))
+
+        if not downloaded_list:
+            raise Exception('0 files downloaded')
+
+        return downloaded_list
 
     def _get_file(self, url, file_name):
 
         d_path = os.path.join(self.path, file_name)
+
         # filname
         try:
             r = self.session.get(url, stream=True)  # link
@@ -264,6 +284,6 @@ RT list          : {self.rt}''')
         if total_size != downloaded_bytes:
             return Exception((file_name, "Size incompatible with the original"))
 
-        return file_name
+        return d_path
 
 
