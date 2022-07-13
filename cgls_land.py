@@ -129,46 +129,36 @@ class Collection:
         self.session = session
         self.name = name
         self.observation_table = observation_table
-        self.sensors = None
+        self.sensors = self.set_sensors()
         self.start_date = None
         self.end_date = None
-        self.alg_version_list = None
-        self.rt = None
+        self.set_date_range()
+        self.sensors = self.set_sensors()
+        self.alg_version_list = self.set_alg_version_list()
+        if 'rt' in self.observation_table.columns:
+            self.rt = self.observation_table['rt'].unique()
+        else:
+            self.rt = None
         self.path = None
 
-    def get_date_range(self):
+    def set_date_range(self):
         self.start_date = self.observation_table['date'].head(1).item()
         self.end_date = self.observation_table['date'].tail(1).item()
 
-        return np.array([str(self.start_date.date()), str(self.end_date.date())])
-
-    def get_alg_version_list(self):
+    def set_alg_version_list(self):
         self.alg_version_list = self.observation_table['version'].unique()
         return self.alg_version_list
 
-    def get_rt(self):
-        if 'rt' in self.observation_table.columns:
-            self.rt = self.observation_table['rt'].unique()
-            return self.rt
-        else:
-            return None
+    def set_rt(self):
+        self.rt = self.observation_table['rt'].unique()
+        return self.rt
 
-    def get_sensors(self):
+    def set_sensors(self):
         self.sensors = self.observation_table['sensor'].unique()
         return self.sensors
 
     @property
     def infos(self):
-        if self.sensors is None:
-            _ = self.get_sensors()
-        if self.start_date is None or self.end_date is None:
-            _ = self.get_date_range()
-        if self.alg_version_list is None:
-            _ = self.get_alg_version_list()
-        if self.rt is None:
-            if 'rt' in self.observation_table.columns:
-                _ = self.get_rt()
-
         print(fr'''
 Product name:      {self.name} 
 Sensor           : {self.sensors}
@@ -176,22 +166,7 @@ Valid time period: [{self.start_date.date()}:{self.end_date.date()}]
 Algoritms        : {self.alg_version_list}
 RT list          : {self.rt}''')
 
-    def download(self, date=None, path=None, **kwargs):
-
-        # RT
-        if 'rt' in self.observation_table.columns:
-            if 'rt' in kwargs:
-                rt = kwargs['rt']
-                self.observation_table = self.observation_table[self.observation_table.RT == rt]
-            else:
-                self.observation_table.drop_duplicates(subset=['date'], keep='last', inplace=True)
-
-        # date
-        if self.start_date is None or self.end_date is None:
-            _ = self.get_date_range()
-
-        self.observation_table.set_index(['date'], inplace=True, drop=True)
-
+    def _select_date(self, date):
         download_list = []
         if date is None:
             link, filename, int_path = self.observation_table.tail(1).item()[['url', 'file_name', 'int_path']]
@@ -204,7 +179,6 @@ RT list          : {self.rt}''')
 
             i = self.observation_table.index.get_indexer([req_date], method='ffill')[0]
             download_list.append(self.observation_table.iloc[i][['url', 'file_name', 'int_path']].values.tolist())
-
         elif isinstance(date, list):
             for n_date in date:
                 req_date = pd.to_datetime(n_date)
@@ -227,7 +201,13 @@ RT list          : {self.rt}''')
             download_list = self.observation_table.iloc[i_start:i_end+1][['url', 'file_name',
                                                                          'int_path']].values.tolist()
 
-        # path
+        return download_list
+
+    # def _sel_sensor(self, sensor=None):
+    #     if sensor is not None and sensor in self.sensors:
+    #         self.observation_table = self.observation_table[self.observation_table['sensor'] == sensor]
+
+    def _path_constructor(self, path, download_list):
         self.path = path
         if self.path is not None:
             if not os.path.isabs(self.path):
@@ -238,8 +218,42 @@ RT list          : {self.rt}''')
         if not os.path.isdir(self.path):
             os.makedirs(self.path, mode=0o777, exist_ok=True)
 
-        downloaded_list = []
+    def _RT(self, rt=None):
+        if rt is not None and rt in self.observation_table.columns:
+            self.observation_table = self.observation_table[self.observation_table.RT == rt]
+        elif rt in self.observation_table.columns:
+            self.observation_table.drop_duplicates(subset=['date'], keep='last', inplace=True)
+        else:
+            pass
 
+    def download(self, date=None, path=None, rt=None, sensor=None, alg=None):
+
+        # RT
+        self._RT()
+
+        # sensor and observation selector
+        q = ''
+        if sensor is not None or alg is not None:
+            if sensor is not None:
+                q += fr'sensor == "{sensor}"'
+            if alg is not None:
+                q += f'version == \'{alg}\''
+            self.observation_table = self.observation_table.query(q)
+
+        # calc date span
+        if self.start_date is None or self.end_date is None:
+            _ = self.set_date_range()
+        # check and change index to dataindex
+        if isinstance(self.observation_table.index[0], np.int64):
+            self.observation_table.set_index(['date'], inplace=True, drop=True)
+
+        # select downloadable files by date
+        download_list = self._select_date(date)
+
+        # path constructor
+        self._path_constructor(path, download_list)
+
+        downloaded_list = []
         dl_tasks = {}
         with ThreadPoolExecutor(max_workers=4) as executor:
             for pid, values in enumerate(download_list):
